@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { api } from '../utils/api.js';
 import { Task } from '../utils/types.js';
+import { decodeTaskText, decodeCommentText } from '../utils/decode.js';
 
 // Tool input schemas
 const AddCommentSchema = z.object({
@@ -90,7 +91,7 @@ export async function handleCommentTool(name: string, args: any): Promise<any> {
         content: [
           {
             type: 'text',
-            text: `Comment added to task ${taskId}\n${JSON.stringify(task, null, 2)}`,
+            text: `Comment added to task ${taskId}\n${JSON.stringify(decodeTaskText(task), null, 2)}`,
           },
         ],
       };
@@ -106,7 +107,7 @@ export async function handleCommentTool(name: string, args: any): Promise<any> {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(comments, null, 2),
+            text: JSON.stringify(comments.map(decodeCommentText), null, 2),
           },
         ],
       };
@@ -123,7 +124,7 @@ export async function handleCommentTool(name: string, args: any): Promise<any> {
         content: [
           {
             type: 'text',
-            text: `Comment ${commentId} deleted from task ${taskId}\n${JSON.stringify(task, null, 2)}`,
+            text: `Comment ${commentId} deleted from task ${taskId}\n${JSON.stringify(decodeTaskText(task), null, 2)}`,
           },
         ],
       };

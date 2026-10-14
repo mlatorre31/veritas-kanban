@@ -1,4 +1,5 @@
 import { api, API_BASE, buildApiHeaders } from '../utils/api.js';
+import { decodeTaskText } from '../utils/decode.js';
 
 export const summaryTools = [
   {
@@ -28,9 +29,14 @@ export const summaryTools = [
 export async function handleSummaryTool(name: string, args: any): Promise<any> {
   switch (name) {
     case 'get_summary': {
-      const summary = await api<unknown>('/api/summary');
+      const summary = await api<{ highPriority?: Array<{ title?: string }> }>(
+        '/api/summary',
+      );
+      const decoded = summary.highPriority
+        ? { ...summary, highPriority: summary.highPriority.map(decodeTaskText) }
+        : summary;
       return {
-        content: [{ type: 'text', text: JSON.stringify(summary, null, 2) }],
+        content: [{ type: 'text', text: JSON.stringify(decoded, null, 2) }],
       };
     }
 

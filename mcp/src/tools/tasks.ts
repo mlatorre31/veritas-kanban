@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { api } from '../utils/api.js';
 import { findTask } from '../utils/find.js';
 import { Task } from '../utils/types.js';
+import { decodeTaskText } from '../utils/decode.js';
 
 // Tool input schemas
 const ListTasksSchema = z.object({
@@ -211,7 +212,7 @@ export async function handleTaskTool(name: string, args: any): Promise<any> {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(tasks, null, 2),
+            text: JSON.stringify(tasks.map(decodeTaskText), null, 2),
           },
         ],
       };
@@ -229,7 +230,7 @@ export async function handleTaskTool(name: string, args: any): Promise<any> {
       }
 
       return {
-        content: [{ type: 'text', text: JSON.stringify(task, null, 2) }],
+        content: [{ type: 'text', text: JSON.stringify(decodeTaskText(task), null, 2) }],
       };
     }
 
@@ -244,7 +245,7 @@ export async function handleTaskTool(name: string, args: any): Promise<any> {
         content: [
           {
             type: 'text',
-            text: `Task created: ${task.id}\n${JSON.stringify(task, null, 2)}`,
+            text: `Task created: ${task.id}\n${JSON.stringify(decodeTaskText(task), null, 2)}`,
           },
         ],
       };
@@ -270,7 +271,7 @@ export async function handleTaskTool(name: string, args: any): Promise<any> {
         content: [
           {
             type: 'text',
-            text: `Task updated: ${updated.id}\n${JSON.stringify(updated, null, 2)}`,
+            text: `Task updated: ${updated.id}\n${JSON.stringify(decodeTaskText(updated), null, 2)}`,
           },
         ],
       };
