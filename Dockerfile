@@ -6,7 +6,8 @@
 #   2. build-shared — Build the shared package
 #   3. build-web   — Build React frontend with Vite
 #   4. build-server — Compile Express server TypeScript
-#   5. production  — Minimal runtime image
+#   5. build-mcp   — Compile the MCP server TypeScript (stdio, via supergateway)
+#   6. production  — Minimal runtime image
 #
 # Target image size: < 200MB
 # =============================================================================
@@ -61,11 +62,24 @@ COPY server/ ./server/
 RUN pnpm --filter @veritas-kanban/server build
 
 # ---------------------------------------------------------------------------
-# Stage 5: Production runtime
+# Stage 5: Build MCP server (TypeScript)
+# ---------------------------------------------------------------------------
+FROM build-shared AS build-mcp
+
+COPY mcp/ ./mcp/
+RUN pnpm --filter @veritas-kanban/mcp build
+RUN test -f mcp/dist/index.js && test -f mcp/dist/utils/decode.js
+
+# ---------------------------------------------------------------------------
+# Stage 6: Production runtime
 # ---------------------------------------------------------------------------
 FROM node:22-alpine AS production
 
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+
+# MCP stdio → HTTP bridge: the vk-mcp service overrides CMD to run
+# `supergateway --stdio "node /app/mcp/dist/index.js"`.
+RUN npm install -g supergateway@4.1.0
 
 # Security: run as non-root
 RUN addgroup -g 1001 -S nodejs && \
@@ -93,6 +107,7 @@ RUN pnpm install --frozen-lockfile --prod --ignore-scripts && \
 COPY --from=build-shared /app/shared/dist ./shared/dist
 COPY --from=build-server /app/server/dist ./server/dist
 COPY --from=build-web /app/web/dist ./web/dist
+COPY --from=build-mcp /app/mcp/dist ./mcp/dist
 
 # Create data directories for persistent storage and runtime config
 # Note: services resolve .veritas-kanban from both cwd/.. and cwd directly,
