@@ -88,6 +88,12 @@ export class TaskService {
   private watcher: FSWatcher | null = null;
   private lastWriteTime = 0;
   private cacheStats = { hits: 0, misses: 0 };
+  // Per-task-ID promise chain serializing lifecycle mutations (update/delete/
+  // archive/restore) so concurrent mutations on one task never interleave.
+  // `withFileLock` serializes individual file ops, but it locks on the file
+  // *path*, so a title change (or a delete+recreate of a different pathname)
+  // lets two mutations on the same task run concurrently — this closes that.
+  private taskMutationQueues = new Map<string, Promise<void>>();
   private taskSyncReconcileInterval: ReturnType<typeof setInterval> | null = null;
   private reconcileRunning = false;
 
@@ -617,7 +623,32 @@ export class TaskService {
     return task;
   }
 
+  /**
+   * Serialize mutations for a single task ID through a per-ID promise chain.
+   * Hand-port of the mechanism in upstream 871101ad (adapted to v4.3.2's
+   * file-only backend): each caller chains onto the previous holder, and the
+   * tail releases the chain when it settles. The chain is NOT re-entrant —
+   * callers must not await another wrapped method for the same ID.
+   */
+  private withTaskMutex<T>(id: string, callback: () => Promise<T>): Promise<T> {
+    const previous = this.taskMutationQueues.get(id) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.taskMutationQueues.set(id, current);
+
+    return previous.then(callback).finally(() => {
+      release();
+      if (this.taskMutationQueues.get(id) === current) this.taskMutationQueues.delete(id);
+    });
+  }
+
   async updateTask(id: string, input: UpdateTaskInput): Promise<Task | null> {
+    return this.withTaskMutex(id, () => this.updateTaskMutation(id, input));
+  }
+
+  private async updateTaskMutation(id: string, input: UpdateTaskInput): Promise<Task | null> {
     // Initial read to check existence and compute the lock filepath.
     // NOTE: this data may be stale by the time we acquire the lock —
     // the actual merge happens inside the lock with a fresh cache read.
@@ -941,6 +972,10 @@ export class TaskService {
   }
 
   async deleteTask(id: string): Promise<boolean> {
+    return this.withTaskMutex(id, () => this.deleteTaskMutation(id));
+  }
+
+  private async deleteTaskMutation(id: string): Promise<boolean> {
     const task = await this.getTask(id);
     if (!task) return false;
 
@@ -975,6 +1010,10 @@ export class TaskService {
   }
 
   async archiveTask(id: string): Promise<boolean> {
+    return this.withTaskMutex(id, () => this.archiveTaskMutation(id));
+  }
+
+  private async archiveTaskMutation(id: string): Promise<boolean> {
     const task = await this.getTask(id);
     if (!task) return false;
 
@@ -1057,6 +1096,10 @@ export class TaskService {
   }
 
   async restoreTask(id: string): Promise<Task | null> {
+    return this.withTaskMutex(id, () => this.restoreTaskMutation(id));
+  }
+
+  private async restoreTaskMutation(id: string): Promise<Task | null> {
     const task = await this.getArchivedTask(id);
     if (!task) return null;
 

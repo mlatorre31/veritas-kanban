@@ -364,4 +364,28 @@ updated: '2026-01-26T10:00:00.000Z'
       expect(remainingTaskFiles.length).toBe(0);
     });
   });
+
+  describe('Task lifecycle mutation serialization', () => {
+    it('never resurrects a deleted task when deleteTask races updateTask', async () => {
+      // withFileLock guards individual file ops, but it locks on the file
+      // *path*. updateTask reads the task outside its lock and falls back to
+      // that stale read once deleteTask has unlinked the file and invalidated
+      // the cache; a title change even locks a different pathname. The
+      // per-task-ID mutex must serialize these so the delete always wins and
+      // the unlinked file is never rewritten.
+      const task = await service.createTask({ title: 'race-test' });
+      const id = task.id;
+
+      await Promise.allSettled([
+        service.deleteTask(id),
+        service.updateTask(id, { title: 'changed title' }),
+      ]);
+
+      // The task must end deleted — never a resurrected cache entry…
+      expect(await service.getTask(id)).toBeNull();
+      // …and never a rewritten file on disk.
+      const files = await fs.readdir(tasksDir);
+      expect(files.filter((f) => f.startsWith(`${id}-`))).toHaveLength(0);
+    });
+  });
 });
