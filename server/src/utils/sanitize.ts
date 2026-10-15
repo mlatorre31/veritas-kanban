@@ -96,8 +96,10 @@ function decodeEntities(input: string): string {
  *   stored text (web-UI autosave, GET→PATCH) never compounds entities.
  * - Literal entity input round-trips unchanged: `&lt;b&gt;` → `&lt;b&gt;`
  *
- * The escape set is exactly what `mcp/src/utils/decode.ts` `decodeEntities`
- * inverts (`&quot; &lt; &gt; &amp;`, `&amp;` last), keeping reads lossless.
+ * The escape set is `&`, `<`, `>` only; the decode step additionally
+ * recognizes `&quot;` (so historical `&quot;` normalizes to `"` on re-edit).
+ * It inverts exactly what the MCP `decodeEntities` emits, keeping reads
+ * lossless.
  */
 export function stripHtml(input: string): string {
   return decodeEntities(input)
