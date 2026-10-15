@@ -5,16 +5,22 @@
  * consumers (mobile apps, CLI tools, third-party integrations) could be
  * vulnerable to stored XSS if the server stores payloads verbatim.
  *
- * Policy:
- *   - Task titles:      strip ALL HTML tags (plain text only)
- *   - Task descriptions: strip ALL HTML tags (plain text only — markdown is rendered client-side)
- *   - Comments:          strip ALL HTML tags (plain text only)
- *   - Author names:      strip ALL HTML tags
+ * Policy (total escape, never discard):
+ *   - Task titles:      entity-escape ALL markup characters (no raw HTML stored)
+ *   - Task descriptions: entity-escape ALL markup characters (no raw HTML stored — markdown is rendered client-side)
+ *   - Comments:          entity-escape ALL markup characters
+ *   - Author names:      entity-escape ALL markup characters
+ *
+ * Tag-like input (valid tags, prose chevrons, attribute-like tokens alike) is
+ * entity-escaped at storage time rather than parsed or deleted, so text is
+ * preserved losslessly. Stored text is never raw markup; consumers that render
+ * HTML decode entities to text (the web UI decodes on render; the MCP decodes
+ * on read). The escape set — `&` `&lt;` `&gt;` `&quot;` — is exactly the four the
+ * MCP `decodeEntities` inverts (amp last), so reads are a perfect round trip.
  *
  * @see docs/SECURITY_AUDIT_2026-01-28.md — MED-1
  */
 
-import sanitizeHtml from 'sanitize-html';
 import path from 'path';
 
 // ─── Path Traversal Prevention ─────────────────────────────────────────────────
@@ -60,21 +66,27 @@ export function ensureWithinBase(base: string, target: string): string {
 }
 
 /**
- * Strip ALL HTML tags, returning clean plain text.
+ * Entity-escape the four markup characters `&`, `<`, `>`, `"` — in that order
+ * (`&` first, so already-encoded entities double-escape and never decode back
+ * into raw markup). Total escape, not tag parsing: nothing is dropped, so
+ * prose chevrons round-trip verbatim.
  *
- * - Normal tag content is preserved: `<b>bold</b>` → `bold`
- * - Script/style content is discarded: `<script>alert(1)</script>` → ``
- * - Event handlers are removed: `<img onerror=alert(1)>` → ``
+ * - Real tags are escaped, content preserved: `<b>bold</b>` → `&lt;b&gt;bold&lt;/b&gt;`
+ * - Prose chevrons with spaces/accents survive: `avant <suffixe GA température> après`
+ *   → `avant &lt;suffixe GA température&gt; après`
+ * - Payloads become inert text, not raw markup: `<script>alert(1)</script>`
+ *   → `&lt;script&gt;alert(1)&lt;/script&gt;` (rendered/decoded as text, never executed)
+ * - Already-encoded input double-escapes: `&lt;b&gt;` → `&amp;lt;b&amp;gt;`
+ *
+ * The escape set is exactly what `mcp/src/utils/decode.ts` `decodeEntities`
+ * inverts (`&quot; &lt; &gt; &amp;`, `&amp;` last), keeping reads lossless.
  */
 export function stripHtml(input: string): string {
-  return sanitizeHtml(input, {
-    allowedTags: [],
-    allowedAttributes: {},
-    // 'discard' (default) strips disallowed tags.
-    // Content inside nonTextTags (script, style, textarea, option, noscript)
-    // is automatically discarded by sanitize-html.
-    disallowedTagsMode: 'discard',
-  });
+  return input
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
 }
 
 /**
