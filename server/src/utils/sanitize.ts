@@ -5,18 +5,21 @@
  * consumers (mobile apps, CLI tools, third-party integrations) could be
  * vulnerable to stored XSS if the server stores payloads verbatim.
  *
- * Policy (total escape, never discard):
- *   - Task titles:      entity-escape ALL markup characters (no raw HTML stored)
- *   - Task descriptions: entity-escape ALL markup characters (no raw HTML stored — markdown is rendered client-side)
- *   - Comments:          entity-escape ALL markup characters
- *   - Author names:      entity-escape ALL markup characters
+ * Policy (total escape, never discard, idempotent):
+ *   - Task titles:      entity-escape `<`, `>`, `&` (no raw HTML stored)
+ *   - Task descriptions: entity-escape `<`, `>`, `&` (no raw HTML stored — markdown is rendered client-side)
+ *   - Comments:          entity-escape `<`, `>`, `&`
+ *   - Author names:      entity-escape `<`, `>`, `&`
  *
  * Tag-like input (valid tags, prose chevrons, attribute-like tokens alike) is
  * entity-escaped at storage time rather than parsed or deleted, so text is
- * preserved losslessly. Stored text is never raw markup; consumers that render
- * HTML decode entities to text (the web UI decodes on render; the MCP decodes
- * on read). The escape set — `&` `&lt;` `&gt;` `&quot;` — is exactly the four the
- * MCP `decodeEntities` inverts (amp last), so reads are a perfect round trip.
+ * preserved losslessly. Stored text is never raw markup; markdown renderers
+ * decode entities to text (the web UI decodes on render; the MCP decodes on
+ * read). The escape set is `<`, `>`, `&` only — `"` is stored raw (the old
+ * sanitizer did too, and nothing renders stored text into HTML attributes).
+ * `stripHtml` is idempotent by construction (decode-then-escape), so the web
+ * UI and GET→PATCH clients can re-submit stored text without compounding
+ * entities.
  *
  * @see docs/SECURITY_AUDIT_2026-01-28.md — MED-1
  */
@@ -66,27 +69,41 @@ export function ensureWithinBase(base: string, target: string): string {
 }
 
 /**
- * Entity-escape the four markup characters `&`, `<`, `>`, `"` — in that order
- * (`&` first, so already-encoded entities double-escape and never decode back
- * into raw markup). Total escape, not tag parsing: nothing is dropped, so
- * prose chevrons round-trip verbatim.
+ * Invert the escape set below — `&quot;` `&lt;` `&gt;` `&amp;`, with `&amp;`
+ * LAST. Mirrors the MCP `decodeEntities` so the decode-then-escape composition
+ * is idempotent: the escape set is a subset of the decode set, therefore
+ * `decode(escape(y)) === y`.
+ */
+function decodeEntities(input: string): string {
+  return input
+    .replaceAll('&quot;', '"')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
+}
+
+/**
+ * Entity-escape the markup characters `&` (first), `<`, `>` — nothing else.
+ * Total escape, not tag parsing: nothing is dropped, so prose chevrons
+ * round-trip verbatim. `"` is intentionally left raw.
  *
  * - Real tags are escaped, content preserved: `<b>bold</b>` → `&lt;b&gt;bold&lt;/b&gt;`
  * - Prose chevrons with spaces/accents survive: `avant <suffixe GA température> après`
  *   → `avant &lt;suffixe GA température&gt; après`
  * - Payloads become inert text, not raw markup: `<script>alert(1)</script>`
  *   → `&lt;script&gt;alert(1)&lt;/script&gt;` (rendered/decoded as text, never executed)
- * - Already-encoded input double-escapes: `&lt;b&gt;` → `&amp;lt;b&amp;gt;`
+ * - Idempotent: `stripHtml(stripHtml(x)) === stripHtml(x)` — re-submitting
+ *   stored text (web-UI autosave, GET→PATCH) never compounds entities.
+ * - Literal entity input round-trips unchanged: `&lt;b&gt;` → `&lt;b&gt;`
  *
  * The escape set is exactly what `mcp/src/utils/decode.ts` `decodeEntities`
  * inverts (`&quot; &lt; &gt; &amp;`, `&amp;` last), keeping reads lossless.
  */
 export function stripHtml(input: string): string {
-  return input
+  return decodeEntities(input)
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
+    .replaceAll('>', '&gt;');
 }
 
 /**

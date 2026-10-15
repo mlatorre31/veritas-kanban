@@ -9,10 +9,11 @@ import {
 /**
  * Contract tests for the total-escape sanitizer.
  *
- * `stripHtml()` escapes the four markup characters `&` (first), `<`, `>`, `"`
- * and does not parse markup, so tag-like input round-trips verbatim and no raw
- * HTML is ever stored. The escape set is exactly what `decodeEntities` inverts
- * (`&quot; &lt; &gt; &amp;`, amp last), keeping MCP reads lossless.
+ * `stripHtml()` is `escape(decode(input))`: it first inverts the entities it
+ * would emit (`&quot; &lt; &gt; &amp;`, amp last — same as the MCP
+ * `decodeEntities`), then escapes `&` (first), `<`, `>`. `"` is left raw. The
+ * decode-then-escape composition is idempotent, so re-submitting stored text
+ * never compounds entities, and literal entity input round-trips unchanged.
  */
 
 describe('stripHtml (total escape)', () => {
@@ -22,7 +23,7 @@ describe('stripHtml (total escape)', () => {
 
   it('preserves prose chevrons with spaces/accents verbatim (production repro)', () => {
     // 2026-10-15 production repro: `<suffixe GA température>` must survive
-    // untouched — the parser-based escape modes dropped/normalized the
+    // untouched — parser-based escape modes dropped/normalized the
     // attribute-like tokens; total escape keeps them byte-for-byte.
     expect(stripHtml('avant <suffixe GA température> après')).toBe(
       'avant &lt;suffixe GA température&gt; après'
@@ -51,14 +52,36 @@ describe('stripHtml (total escape)', () => {
     expect(stripHtml('<img onerror=alert(1)>')).toBe('&lt;img onerror=alert(1)&gt;');
   });
 
-  it('double-escapes already-encoded input', () => {
-    // `&` is escaped first, so an incoming `&lt;b&gt;` becomes `&amp;lt;b&amp;gt;`
-    // and decodes back to the literal `<b>` text, never to a real tag.
-    expect(stripHtml('&lt;b&gt;')).toBe('&amp;lt;b&amp;gt;');
+  it('stores double quotes raw (old-sanitizer parity)', () => {
+    // `"` is not escaped: the old sanitizer stored it raw and nothing renders
+    // stored text into HTML attributes, so escaping it only leaks `&quot;`
+    // into plain-text surfaces.
+    expect(stripHtml('say "hi"')).toBe('say "hi"');
+  });
+});
+
+describe('stripHtml idempotence', () => {
+  const battery = [
+    'a -> b && c',
+    'avant <suffixe GA température> après',
+    '&lt;b&gt;',
+    'say "hi" <b> & done',
+  ];
+
+  for (const input of battery) {
+    it(`is idempotent for ${JSON.stringify(input)}`, () => {
+      expect(stripHtml(stripHtml(input))).toBe(stripHtml(input));
+    });
+  }
+
+  it('is stable for old-data already-encoded arrows (edit cycle)', () => {
+    // Stored text from before this change already holds `-&gt;`; a GET→PATCH
+    // round-trip decodes then re-escapes it, leaving storage byte-identical.
+    expect(stripHtml('a -&gt; b')).toBe('a -&gt; b');
   });
 
-  it('escapes double quotes', () => {
-    expect(stripHtml('say "hi"')).toBe('say &quot;hi&quot;');
+  it('round-trips literal entity input unchanged', () => {
+    expect(stripHtml('&lt;b&gt;')).toBe('&lt;b&gt;');
   });
 });
 
